@@ -1,53 +1,123 @@
 import argparse
-import re
 import configparser
+import time
+import datetime as dt
+import os
 
-def time_off():
-  print("time off") 
+from datetime import date, datetime
+from spreadsheet_helper import *
 
-def time_on():
-  print("time on") 
+def api_push(url):
+    wrapper = API(url)
+    wrapper.getValues("Sheet3")
+    print(wrapper.getCell("B1"))
+    print(wrapper.getCell("C5"))
+    exit(0)
 
-def new_subtask(): 
-  print("new subtask") 
+def cfg_insert(cfg, section, var, val):
+  if section in cfg:
+    cfg[section][var] = val
+    new = False
+  else:
+    cfg[section] = { var : val }     
+    new = True
+  with open('task_timing.cfg', 'w') as cfg_file:
+    cfg.write(cfg_file) 
 
-def new_task():
-  print("new task") 
-
-def set_spreadsheet():
-  print("set spreadsheet") 
+def writeFile(task, date, dur, subtask, note):
+  path = os.environ['HOME'] + '/.timer_records/';
+ 
+  if not os.path.exists(path):
+    os.makedirs(path)
+    print('\nFolder ' + path + ' created') 
+ 
+  record = configparser.ConfigParser()
+  record['RECORD'] = { 'TASK'     : task,
+                       'DATE'     : date,
+                       'DURATION' : dur,
+                       'SUBTASK'  : subtask,
+                       'NOTE'     : note
+                     }
+  f = path + datetime.now().strftime("%Y_%m_%d__%H_%M_%S")
+  print("\nRecord saved to file:\n  " + f + "\n\n Use --push to sync the google sheets file\n")
+  with open(f,'w') as record_file:
+    record.write(record_file)
   
-
 def main():
   parser = argparse.ArgumentParser(description='Time tasks and subtasks using google sheets api')
-  onoff = parser.add_mutually_exclusive_group(required=False)
-  onoff.add_argument('-on', metavar=('TASK','SUBTASK'), nargs=2)
-  onoff.add_argument('-off', metavar=('TASK','SUBTASK', 'NOTE'), nargs=3)
-  parser.add_argument('--spreadsheet', metavar='ID', help='The spreadsheet to modify') 
+  ex = parser.add_mutually_exclusive_group(required=False)
+  ex.add_argument('-on', metavar=(' TASK','SUBTASK'), nargs=2)
+  ex.add_argument('-off', metavar=('TASK','SUBTASK'), nargs=2)
+  parser.add_argument('-n','--note', metavar='"NOTE"',  help='Store in spreadsheet with this note. If omitted spreadsheet will not be updated.') 
+  ex.add_argument('--spreadsheet', metavar='URL', help='The spreadsheet to modify') 
+  ex.add_argument('--push', action='store_true', help='Update spreadsheet with recorded times')
+  ex.add_argument('--reset', action='store_true', help='Clear all current timers')
  
   args = parser.parse_args()
   cfg = configparser.ConfigParser()
   cfg.read('task_timing.cfg')
 
+  # reset current timers. Cancels all running timers
+  if args.reset:
+    clear_cfg = configparser.ConfigParser()
+    clear_cfg['CONFIG'] = cfg['CONFIG']
+
+    with open('task_timing.cfg', 'w') as cfg_file:
+      clear_cfg.write(cfg_file) 
+    exit(0)
+
   URL = ''
   if args.spreadsheet != None:
-    if 'CONFIG' in cfg and 'URL' in cfg['CONFIG']:
-      cfg['CONFIG']['URL'] = args.spreadsheet
-    else:
-      cfg['CONFIG'] = { 'URL' : args.spreadsheet }     
+    cfg_insert(cfg, 'CONFIG', 'URL', args.spreadsheet)
  
   if 'CONFIG' in cfg and 'URL' in cfg['CONFIG']:
     URL = cfg['CONFIG']['URL']
-    print(URL)
+  # Push timers to the spreadsheet.
+    if args.push:
+      api_push(URL)
  
   else:
-    print('error: No spreadsheet specified. Used --spreadsheet to pass ID')
+    print('No spreadsheet specified. Used --spreadsheet to pass ID')
     cfg['CONFIG'] = { 'URL' : '' }     
 
-  with open('task_timing.cfg', 'w') as cfg_file:
-    cfg.write(cfg_file) 
+  if args.on == None and args.off == None:
+    if (args.spreadsheet == None):
+      print("No operation provided! Try -on, -off or -h")
+    exit(0)
+  
+  if args.off == None:
+    args.on.append('on');
+    action = args.on
+  else:
+    args.off.append('off');
+    action = args.off
 
+  action[0] = action[0].upper()
+  action[1] = action[1].lower()
+  today     = date.today().strftime("%d/%m/%Y")
+ 
+  cfg_insert(cfg, 'TASKS', 'TODAY', today)
 
+  subtitle = action[0]+'_'+action[1]
+  action_time = time.time()
+
+  cfg_insert(cfg, subtitle, action[2], str(action_time))
+
+  if action[2] == 'on':
+    print('Timer for ' + action[0] + ' - ' + action[1] + ' Running')
+  elif cfg[action[0]][action[1]] == 'on': 
+    print('Timer for '+ action[0] + ' - ' + action[1] + ' Stopped')
+    if 'on' in cfg[subtitle]:
+      sec = int(action_time - float(cfg[subtitle]['on']))
+      print("Duration: " + str(dt.timedelta(seconds=sec)))
+      days = sec/60/60/24
+
+      if args.note != None:
+        writeFile(action[0], today, days, action[1], args.note)
+    else:
+      print("Error: Corrupted data")
+
+  cfg_insert(cfg, action[0], action[1], action[2])
 
 if __name__ == "__main__":
   main()
