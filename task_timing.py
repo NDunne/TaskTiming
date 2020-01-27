@@ -127,12 +127,14 @@ def main():
     args.off.append('off');
     action = args.off
 
+  # define case for string comparison
   action[0] = action[0].title()
   action[1] = action[1].title()
   today     = date.today().strftime("%d/%m/%Y")
  
   cfg_insert(cfg, 'TASKS', 'TODAY', today)
 
+  # TITLE_SUBTITLE is section title
   subtitle = action[0]+'_'+action[1]
   action_time = time.time()
 
@@ -142,6 +144,7 @@ def main():
     print('Timer for ' + action[0] + ' - ' + action[1] + ' Running')
   elif cfg[action[0]][action[1]] == 'on': 
     print('Timer for '+ action[0] + ' - ' + action[1] + ' Stopped')
+    # calculate time difference
     if 'on' in cfg[subtitle]:
       sec = int(action_time - float(cfg[subtitle]['on']))
       print("Duration: " + str(dt.timedelta(seconds=sec)))
@@ -154,5 +157,6 @@ def main():
 
   cfg_insert(cfg, action[0], action[1], action[2])
 
+#call main function
 if __name__ == "__main__":
   main()
