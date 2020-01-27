@@ -3,24 +3,26 @@ import configparser
 import time
 import datetime as dt
 import os
+import re
 
 from datetime import date, datetime
 from spreadsheet_helper import *
 
-path = os.environ['HOME'] + '/.timer_records/';
+file_pattern = re.compile("[0-9][0-9][0-9][0-9]_[0-9][0-9]_[0-9][0-9]__[0-9][0-9]_[0-9][0-9]_[0-9][0-9]")
 
 # use google api to update spreadsheet
-def api_push(url):
+def api_push(url, cred):
   data = []
-  api = API(url)
+  api = API(url, cred)
   i = 0
 
   #api call to create spreadsheet needed before anything else
   for filename in os.listdir(path):
-    data.append(configparser.ConfigParser())
-    data[i].read(path+filename)
-    api.getOrCreateSheet(data[i]['RECORD']['task'])
-    i += 1
+    if file_pattern.match(filename):
+      data.append(configparser.ConfigParser())
+      data[i].read(path+filename)
+      api.getOrCreateSheet(data[i]['RECORD']['task'])
+      i += 1
   
   #send request
   api.updateSpreadsheet()
@@ -33,7 +35,8 @@ def api_push(url):
   # check success? #
 
   for filename in os.listdir(path):
-    os.remove(path+filename)
+    if file_pattern.match(filename):
+      os.remove(path+filename)
 
   exit(0)
   
@@ -43,7 +46,10 @@ def cfg_insert(cfg, section, var, val):
     cfg[section][var] = val
   else:
     cfg[section] = { var : val }     
-  with open('task_timing.cfg', 'w') as cfg_file:
+  
+  if not os.path.exists(path):
+    os.makedirs(path)
+  with open(path+'task_timing.cfg', 'w+') as cfg_file:
     cfg.write(cfg_file) 
 
 # writes a data file to be pushed to the spreadsheet
@@ -77,85 +83,110 @@ def main():
 
   # might need revisiting for ease of use
   parser = argparse.ArgumentParser(description='Time tasks and subtasks using google sheets api')
-  ex = parser.add_mutually_exclusive_group(required=False)
-  ex.add_argument('-on', metavar=(' TASK','SUBTASK'), nargs=2)
-  ex.add_argument('-off', metavar=('TASK','SUBTASK'), nargs=2)
-  parser.add_argument('-n','--note', metavar='"NOTE"',  help='Store in spreadsheet with this note. If omitted spreadsheet will not be updated.') 
-  ex.add_argument('--spreadsheet', metavar='URL', help='The spreadsheet to modify') 
-  ex.add_argument('--push', action='store_true', help='Update spreadsheet with recorded times')
-  ex.add_argument('--reset', action='store_true', help='Clear all current timers')
+  tmr_args = parser.add_argument_group('Start/Stop Timer')
+  tmr_args.add_argument('task', nargs='?')
+  tmr_args.add_argument('subtask', nargs='?')
+  tmr_args.add_argument('action', choices={'on','off'}, nargs='?')
+  tmr_args.add_argument('-n','--note', metavar='"NOTE"',  help='Store in spreadsheet with this note') 
+
+  cfg_args = parser.add_argument_group('Configuration')
+  cfg_args.add_argument('--spreadsheet', metavar='URL', help='The spreadsheet to modify') 
+  cfg_args.add_argument('--cred', metavar='FILEPATH', help='Full path of credentials.json for google authentication') 
+  cfg_args.add_argument('--reset', action='store_true', help='Clear all current timers and exit')
+  
+  api_args = parser.add_argument_group('Remote')
+  api_args.add_argument('--push', action='store_true', help='Update spreadsheet with recorded times')
  
   args = parser.parse_args()
 
   # read config file
   cfg = configparser.ConfigParser()
-  cfg.read('task_timing.cfg')
+  cfg.read(path + 'task_timing.cfg')
 
   # reset current timers. Cancels all running timers
   if args.reset:
     clear_cfg = configparser.ConfigParser()
     clear_cfg['CONFIG'] = cfg['CONFIG']
 
-    with open('task_timing.cfg', 'w') as cfg_file:
+    with open(path+'task_timing.cfg', 'w') as cfg_file:
       clear_cfg.write(cfg_file) 
     exit(0)
 
   URL = ''
+  CRED = ''
   if args.spreadsheet != None:
     cfg_insert(cfg, 'CONFIG', 'URL', args.spreadsheet)
+
+  if args.cred != None:
+    cfg_insert(cfg, 'CONFIG', 'CRED', args.cred)
  
-  if 'CONFIG' in cfg and 'URL' in cfg['CONFIG']:
-    URL = cfg['CONFIG']['URL']
+  if 'CONFIG' in cfg: 
+    if 'URL' in cfg['CONFIG']:
+      URL = cfg['CONFIG']['URL']
+    else:
+      print(" - No Spreadsheet URL configured. Use --spreadsheet to set.")
+    if 'CRED' in cfg['CONFIG']:
+      CRED = cfg['CONFIG']['CRED']
+    else:
+      print(" - No Credential file configured. Use --cred to set.")
   # Push timers to the spreadsheet.
     if args.push:
-      api_push(URL)
+      api_push(URL, CRED)
  
   else:
-    print('No spreadsheet specified. Used --spreadsheet to pass ID')
-    cfg['CONFIG'] = { 'URL' : '' }     
+    cfg['CONFIG'] = { 'URL' : URL, 'CRED' : CRED }     
 
-  if args.on == None and args.off == None:
-    if (args.spreadsheet == None):
-      print("No operation provided! Try -on, -off or -h")
+
+  task = "" if args.task == None else args.task
+  subtask = "" if args.subtask == None else args.subtask
+  action = "" if args.action == None else args.action
+
+  if task == "":
+    print("No config or timer operation provided. Try '-h' ")
     exit(0)
-  
-  # add action
-  if args.off == None:
-    args.on.append('on');
-    action = args.on
-  else:
-    args.off.append('off');
-    action = args.off
+  elif subtask == "":
+    print("No timer operation for task",task,"provided. Try '-h' ")
+    exit(0)
+  elif action == "":
+    if subtask == "on" or subtask == "off":
+      action = subtask 
+      subtask = "Base"
+    else:
+      print("No timer operation for task",task,"-",subtask,"provided. Try '-h' ")
+      exit(0)
+    
 
-  # define case for string comparison
-  action[0] = action[0].title()
-  action[1] = action[1].title()
-  today     = date.today().strftime("%d/%m/%Y")
+  print(task,"|",subtask,"|",action)  
+
+  today   = date.today().strftime("%d/%m/%Y")
  
   cfg_insert(cfg, 'TASKS', 'TODAY', today)
 
   # TITLE_SUBTITLE is section title
-  subtitle = action[0]+'_'+action[1]
+  subtitle = task+'_'+subtask
   action_time = time.time()
 
-  cfg_insert(cfg, subtitle, action[2], str(action_time))
+  cfg_insert(cfg, subtitle, action, str(action_time))
 
-  if action[2] == 'on':
-    print('Timer for ' + action[0] + ' - ' + action[1] + ' Running')
-  elif cfg[action[0]][action[1]] == 'on': 
-    print('Timer for '+ action[0] + ' - ' + action[1] + ' Stopped')
+  if action == 'on':
+    print('Timer for ' + task + ' - ' + subtask + ' Running')
+  elif cfg[task][subtask] == 'on': 
+    print('Timer for '+ task + ' - ' + subtask + ' Stopped')
     # calculate time difference
     if 'on' in cfg[subtitle]:
       sec = int(action_time - float(cfg[subtitle]['on']))
       print("Duration: " + str(dt.timedelta(seconds=sec)))
       days = sec/60/60/24
 
-      if args.note != None:
-        writeFile(action[0], today, days, action[1], args.note)
+      if args.subtask != " ":
+        if args.note == None:
+          note = ""
+        else: note = args.note
+        writeFile(task, today, days, subtask, note)
     else:
       print("Error: Corrupted data")
 
-  cfg_insert(cfg, action[0], action[1], action[2])
+  cfg_insert(cfg, task, subtask, action)
 
 #call main function
 if __name__ == "__main__":

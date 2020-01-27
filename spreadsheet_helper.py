@@ -6,6 +6,8 @@ from googleapiclient.errors import HttpError
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 
+path = os.environ['HOME'] + '/.timer_records/';
+
 # TODO
 # check for failure to prevent file delete
 # chart!
@@ -189,24 +191,28 @@ class API:
   creds   = None
 
   # Authenticate with google
-  def __init__(self,url):
+  def __init__(self,url,credFile):
     ret = re.search('/d/(.*)/edit', url)
     if ret != None:
       self.id = ret.group(1)
     
       # https://developers.google.com/sheets/api/quickstart/python
-      if os.path.exists('token.pickle'):
-        with open('token.pickle', 'rb') as token:
+      if os.path.exists(path+'token.pickle'):
+        with open(path+'token.pickle', 'rb') as token:
           self.creds = pickle.load(token)
       # If there are no (valid) credentials available, let the user log in.
       if not self.creds or not self.creds.valid:
         if self.creds and self.creds.expired and self.creds.refresh_token:
           self.creds.refresh(Request())
         else:
-          flow = InstalledAppFlow.from_client_secrets_file('credentials.json', self.SCOPES)
+          try:
+            flow = InstalledAppFlow.from_client_secrets_file(credFile, self.SCOPES)
+          except FileNotFoundError:
+            print("error: Couldn't find credentials at location:\n",credFile)
+            exit(0)
           self.creds = flow.run_local_server(port=0)
           # Save the credentials for the next run
-          with open('token.pickle', 'wb') as token:
+          with open(path+'token.pickle', 'wb') as token:
             pickle.dump(self.creds, token)
 
       self.spreadsheet = build('sheets', 'v4', credentials=self.creds).spreadsheets()
@@ -218,6 +224,7 @@ class API:
  
     else:
       print("Error: Spreadsheet ID not found in URL:\n  " + url)
+      exit(0)
 
   # Shorthand for retieving this value
   def getSheetId(self, name):
