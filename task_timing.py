@@ -7,12 +7,30 @@ import os
 from datetime import date, datetime
 from spreadsheet_helper import *
 
+path = os.environ['HOME'] + '/.timer_records/';
+
 def api_push(url):
-    wrapper = API(url)
-    wrapper.getValues("Sheet3")
-    print(wrapper.getCell("B1"))
-    print(wrapper.getCell("C5"))
-    exit(0)
+  data = []
+  api = API(url)
+  i = 0
+  for filename in os.listdir(path):
+    data.append(configparser.ConfigParser())
+    data[i].read(path+filename)
+    api.getOrCreateSheet(data[i]['RECORD']['task'])
+    i += 1
+  api.updateSpreadsheet()
+  for record in data:
+    api.addRecord(record['RECORD']['task'], record['RECORD']['date'], record['RECORD']['subtask'], record['RECORD']['duration'], record['RECORD']['note'])
+  api.updateValues()
+  api.updateSpreadsheet()
+  
+  # check success? #
+
+  for filename in os.listdir(path):
+    os.remove(path+filename)
+
+  exit(0)
+  
 
 def cfg_insert(cfg, section, var, val):
   if section in cfg:
@@ -25,7 +43,6 @@ def cfg_insert(cfg, section, var, val):
     cfg.write(cfg_file) 
 
 def writeFile(task, date, dur, subtask, note):
-  path = os.environ['HOME'] + '/.timer_records/';
  
   if not os.path.exists(path):
     os.makedirs(path)
