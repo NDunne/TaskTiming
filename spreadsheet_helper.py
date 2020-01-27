@@ -6,6 +6,12 @@ from googleapiclient.errors import HttpError
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 
+# TODO
+# check for failure to prevent file delete
+# chart!
+# readme
+# default task/subtask - tinker with arguments
+
 # Workflow: 
 # map of Task name to sheetID
 # process each file:
@@ -17,6 +23,7 @@ from google.auth.transport.requests import Request
 #   then: queue append row 
 #   finally send values request
 
+# abstract parent class
 class httpRequester:
   def __init__(self, remote):
     self.service = remote
@@ -29,10 +36,12 @@ class httpRequester:
       print("API ERROR")
       print(e)  
 
+# Deals with spreadsheet collection
 class SpreadsheetAPI(httpRequester):
   def __init__(self,spreadsheet):
     super().__init__(spreadsheet)
 
+  # Create map of name to Sheet Object from Spreadsheet Object
   def getSheetsMap(self, spreadsheet):
     sheetsMap = {}
     for sheetObj in spreadsheet["sheets"]:
@@ -43,12 +52,14 @@ class SpreadsheetAPI(httpRequester):
       }
     return sheetsMap 
 
+  # Use Get API call to retrieve Spreadsheet Object
   def getSheets(self, spreadsheetId):
     request = self.service.get(spreadsheetId=spreadsheetId, includeGridData=True)
     response = request.execute()
 
     return self.getSheetsMap(response)
 
+  # Add a request to create a new Sheet
   def addSheet(self, name):
     for s in self.requests:
       if s["addSheet"]["properties"]["title"] == name:
@@ -59,6 +70,7 @@ class SpreadsheetAPI(httpRequester):
     })
     print("add",name)
 
+  # Add request to format Duration column and Heading row
   def formatCells(self, sheetId, endCol, endRow):
     # Duration as time
     self.requests.append({
@@ -101,6 +113,7 @@ class SpreadsheetAPI(httpRequester):
       }
     })
 
+  # Fill in SubTask Columns with Formula
   def repeatFormula(self, sheetId, endCol, endRow):
     self.requests.append({
       "repeatCell" : {
@@ -127,7 +140,9 @@ class SpreadsheetAPI(httpRequester):
     })
     self.formatCells(sheetId, endCol, endRow)
   
+  # Single API call multiple requests
   def batchUpdate(self, spreadsheetId):
+    if not len(self.requests): return {}
     request_body = {
       "requests" : self.requests,
       "includeSpreadsheetInResponse": True
@@ -142,10 +157,12 @@ class SpreadsheetAPI(httpRequester):
       return self.getSheetsMap(response['updatedSpreadsheet'])
     return {}
 
+# Deals with spreadsheet.values Collection
 class ValuesAPI(httpRequester):
   def __init__(self,values):
     super().__init__(values)    
 
+  # Add Values to a grid of cells
   def addValues(self, sheet, cells, values):
     self.requests.append({
       "range" : sheet+"!"+cells,
@@ -153,7 +170,9 @@ class ValuesAPI(httpRequester):
       "values" : values
     })
 
+  # Single API call mutliple requests
   def batchUpdate(self, spreadsheetId):
+    if not len(self.requests): return {}
     request_body = {
       "valueInputOption" : "USER_ENTERED",
       "data" : self.requests,
@@ -169,6 +188,7 @@ class API:
   SCOPES  = ['https://www.googleapis.com/auth/spreadsheets']
   creds   = None
 
+  # Authenticate with google
   def __init__(self,url):
     ret = re.search('/d/(.*)/edit', url)
     if ret != None:
@@ -191,6 +211,7 @@ class API:
 
       self.spreadsheet = build('sheets', 'v4', credentials=self.creds).spreadsheets()
 
+      # Create API objects
       self.spreadsheetAPI = SpreadsheetAPI(self.spreadsheet)
       self.sheets = self.spreadsheetAPI.getSheets(self.id)
       self.valuesAPI = ValuesAPI(self.spreadsheet.values())
@@ -198,12 +219,15 @@ class API:
     else:
       print("Error: Spreadsheet ID not found in URL:\n  " + url)
 
+  # Shorthand for retieving this value
   def getSheetId(self, name):
     return self.sheets[name]["obj"]["properties"]["sheetId"]
 
+  # Convert (x, y) to cell reference
   def coordToRange(self,row, col):
     return chr(ord('A') + row) + str(col+1)
 
+  # read cell value
   def getCellValue(self, name, cell):
     col = ord(cell[0]) - ord('A')
     row = int(cell[1:]) - 1
@@ -212,11 +236,13 @@ class API:
 
     try:
       return (self.sheets[name]["obj"]["data"][0]["rowData"][row]["values"][col]["formattedValue"])
+    # Sheet is empty, carry on
     except KeyError:
       return ""    
     except IndexError:
       return ""    
 
+  # get index of next row to insert on
   def getNextRow(self, name):
     read = self.sheets[name]["nextRow"]
     if read != -1:
@@ -230,42 +256,51 @@ class API:
     self.sheets[name]["nextRow"] = row + 2
     return row 
 
+  # get index of subtask column, insert if necessary
   def getColIdx(self, name, subtask):
     read = self.sheets[name]["nextCol"]
 
     idx = 4
     found = False;
     while not found:
-      heading = self.getCellValue(name, self.coordToRange(idx, 1)).lower()
+      heading = self.getCellValue(name, self.coordToRange(idx, 1))
       if heading == "":
         break
       elif heading == subtask:
+        # already exists
         return idx
       else:
         idx+=1
 
+    # doesn't exist. idx is first free column from last read
     if read == -1:
+      # no columns inserted yet
       col = idx;
       self.sheets[name]["nextCol"] = idx + 1
     else:
+      # insert after last inserted
       col = read
       self.sheets[name]["nextCol"] = read + 1
   
-    print(name, subtask, col)
+    # print(name, subtask, col)
  
     start = self.coordToRange(col,1)
     end   = self.coordToRange(col,2)
     cells = start + ":" + end
+    # add title and initial value
     self.valuesAPI.addValues(name, cells,[[ subtask.title() ], [ 0 ]])
   
     return col
 
+  # add a row to a sheet
   def addRecord(self, task, date, subtask, duration, note):
-    print(date, subtask, duration, note)
+    # print(date, subtask, duration, note)
  
+    # ensure default column headings exist
     if self.getCellValue(task, "A2") != "Date":
       self.valuesAPI.addValues(task, "A2:D3", [["Date","Sub-Task","Duration","Note"],[date, "", "", ""]])
 
+    # get insert position
     nxtRow = self.getNextRow(task)
     col    = self.getColIdx(task, subtask)
 
@@ -276,25 +311,22 @@ class API:
     
     self.valuesAPI.addValues(task, cells, [[date, "", 0, ""],[ date, subtask, duration, note ]]) 
     
+    # also does formatting
     self.spreadsheetAPI.repeatFormula(self.getSheetId(task), col, nxtRow+1) 
 
+
+  # Create Sheet for Task if it doesn't exist
   def getOrCreateSheet(self, name):
     if name not in self.sheets.keys():
        self.spreadsheetAPI.addSheet(name)
 
+  # Called once all iterations are complete to send API call
   def updateSpreadsheet(self):
     newSheets = self.spreadsheetAPI.batchUpdate(self.id)
     if newSheets != {}:
       self.sheets = newSheets
 
+  # Called once all iterations are complete to send API call
   def updateValues(self):
     self.valuesAPI.batchUpdate(self.id)
-
-  def getCell(self,cell):
-    col = ord(cell[0]) - ord('A')
-    row = int(cell[1]) - 1
-
-    try:
-      return self.values[row][col]
-    except IndexError:
-      return ''
+    self.updateSpreadsheet()

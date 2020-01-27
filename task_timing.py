@@ -9,20 +9,26 @@ from spreadsheet_helper import *
 
 path = os.environ['HOME'] + '/.timer_records/';
 
+# use google api to update spreadsheet
 def api_push(url):
   data = []
   api = API(url)
   i = 0
+
+  #api call to create spreadsheet needed before anything else
   for filename in os.listdir(path):
     data.append(configparser.ConfigParser())
     data[i].read(path+filename)
     api.getOrCreateSheet(data[i]['RECORD']['task'])
     i += 1
+  
+  #send request
   api.updateSpreadsheet()
   for record in data:
     api.addRecord(record['RECORD']['task'], record['RECORD']['date'], record['RECORD']['subtask'], record['RECORD']['duration'], record['RECORD']['note'])
+
+  #send request to update values
   api.updateValues()
-  api.updateSpreadsheet()
   
   # check success? #
 
@@ -31,19 +37,19 @@ def api_push(url):
 
   exit(0)
   
-
+# insert into config, or create section if required
 def cfg_insert(cfg, section, var, val):
   if section in cfg:
     cfg[section][var] = val
-    new = False
   else:
     cfg[section] = { var : val }     
-    new = True
   with open('task_timing.cfg', 'w') as cfg_file:
     cfg.write(cfg_file) 
 
+# writes a data file to be pushed to the spreadsheet
 def writeFile(task, date, dur, subtask, note):
  
+  # create folder if it doesn't exist
   if not os.path.exists(path):
     os.makedirs(path)
     print('\nFolder ' + path + ' created') 
@@ -55,12 +61,21 @@ def writeFile(task, date, dur, subtask, note):
                        'SUBTASK'  : subtask,
                        'NOTE'     : note
                      }
+  # name file current date and time
   f = path + datetime.now().strftime("%Y_%m_%d__%H_%M_%S")
   print("\nRecord saved to file:\n  " + f + "\n\n Use --push to sync the google sheets file\n")
   with open(f,'w') as record_file:
     record.write(record_file)
-  
+
+#
+# Main method
+#
+
 def main():
+
+  # create arguments
+
+  # might need revisiting for ease of use
   parser = argparse.ArgumentParser(description='Time tasks and subtasks using google sheets api')
   ex = parser.add_mutually_exclusive_group(required=False)
   ex.add_argument('-on', metavar=(' TASK','SUBTASK'), nargs=2)
@@ -71,6 +86,8 @@ def main():
   ex.add_argument('--reset', action='store_true', help='Clear all current timers')
  
   args = parser.parse_args()
+
+  # read config file
   cfg = configparser.ConfigParser()
   cfg.read('task_timing.cfg')
 
@@ -102,6 +119,7 @@ def main():
       print("No operation provided! Try -on, -off or -h")
     exit(0)
   
+  # add action
   if args.off == None:
     args.on.append('on');
     action = args.on
@@ -109,8 +127,8 @@ def main():
     args.off.append('off');
     action = args.off
 
-  action[0] = action[0].upper()
-  action[1] = action[1].lower()
+  action[0] = action[0].title()
+  action[1] = action[1].title()
   today     = date.today().strftime("%d/%m/%Y")
  
   cfg_insert(cfg, 'TASKS', 'TODAY', today)
